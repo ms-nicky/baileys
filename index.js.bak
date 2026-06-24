@@ -845,7 +845,7 @@ const resolveBaileysStartupVersion = async () => {
   const timeoutMs = Number(global.baileysVersionTimeoutMs || process.env.BAILEYS_VERSION_TIMEOUT_MS || 10000)
   const fallbackVersion = Array.isArray(defaultBaileysVersion) && defaultBaileysVersion.length === 3
     ? defaultBaileysVersion
-    : [2, 2404, 10]
+    : [2, 3000, 1042026337]
 
   try {
     const latestInfo = await Promise.race([
