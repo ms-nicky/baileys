@@ -15,7 +15,7 @@
         "baseurl": "https://nickystore.my.id"
     },
     "license": "MIT",
-    "author": "Adhiraj Singh",
+    "author": "ms-nicky",
     "main": "lib/index.js",
     "types": "lib/index.d.ts",
     "files": [
