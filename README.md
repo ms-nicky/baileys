@@ -1,45 +1,98 @@
 # @ms-nicky/baileys
 
-WhatsApp API library using WebSocket technology (multi-device). Fork of Baileys with additional features.
+WhatsApp API library using WebSocket technology (multi-device).  
+Fork of [WhiskeySockets/Baileys](https://github.com/WhiskeySockets/Baileys) with pairing code fixes and auto version detection.
 
 ---
 
 ## Installation
 
 ```bash
-npm install ms-nicky/baileys
+npm install github:ms-nicky/baileys
+```
+
+Or in `package.json`:
+
+```json
+"@whiskeysockets/baileys": "github:ms-nicky/baileys"
 ```
 
 ---
 
-## Usage
+## Quick Start
+
+### Pairing Code (Recommended)
 
 ```javascript
-const { makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@ms-nicky/baileys')
+const { default: makeWASocket, useMultiFileAuthState, fetchLatestWaWebVersion, makeCacheableSignalKeyStore } = require('@ms-nicky/baileys')
+const pino = require('pino')
 
-async function startBot() {
+async function start() {
+  const { version } = await fetchLatestWaWebVersion()
   const { state, saveCreds } = await useMultiFileAuthState('auth_info')
 
   const sock = makeWASocket({
-    auth: state,
-    printQRInTerminal: true
+    version,
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
+    },
+    printQRInTerminal: false,
+    browser: ['Chrome (Linux)', '', ''],
   })
 
   sock.ev.on('creds.update', saveCreds)
-
-  sock.ev.on('messages.upsert', async ({ messages }) => {
-    const m = messages[0]
-    if (!m.message || m.key.fromMe) return
-
-    const text = m.message.conversation || m.message.extendedTextMessage?.text || ''
-    if (text === 'ping') {
-      await sock.sendMessage(m.key.remoteJid, { text: 'pong' }, { quoted: m })
+  sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
+    if (connection === 'open') console.log('✓ Connected')
+    if (connection === 'close') {
+      const code = lastDisconnect?.error?.output?.statusCode
+      if (code !== 401) setTimeout(start, 5000)
     }
   })
+
+  // Generate & display pairing code
+  const code = await sock.requestPairingCode('62812xxxxxxx')
+  console.log(`Pairing code: ${code}`)
 }
 
-startBot()
+start()
 ```
+
+### Using the included pair script
+
+```bash
+node pair.js 62812xxxxxxx
+```
+
+The script will display the pairing code, then send a test message once connected.
+
+---
+
+## Key Features
+
+### Auto Version Detection
+
+Fetches the latest WhatsApp Web version from [WPPConnect](https://wppconnect.io/whatsapp-versions) at startup. Falls back to a hardcoded version if the fetch fails.
+
+```javascript
+const { version, isLatest } = await fetchLatestWaWebVersion()
+```
+
+### Pairing Code Fix
+
+- Validates phone number (international format, rejects leading `0`)
+- Waits for Noise handshake to complete before sending pairing IQ
+- Uses random nonce instead of hardcoded `"0"`
+- Supports custom pairing key
+
+```javascript
+const code = await sock.requestPairingCode('62812xxxxxxx')
+const code = await sock.requestPairingCode('62812xxxxxxx', 'CUSTOMKEY')
+```
+
+### 405 Error Recovery
+
+Automatically detects `405 Method Not Allowed` errors from WhatsApp and retries the connection.
 
 ---
 
@@ -146,11 +199,7 @@ await sock.sendMessage(jid, {
     footer: 'Footer',
     buttons: [{
       name: 'cta_copy',
-      buttonParamsJson: JSON.stringify({
-        display_text: 'Copy Code',
-        id: '123',
-        copy_code: 'ABC123'
-      })
+      buttonParamsJson: JSON.stringify({ display_text: 'Copy Code', id: '123', copy_code: 'ABC123' })
     }]
   }
 })
@@ -164,22 +213,10 @@ await sock.sendMessage(jid, {
     title: 'Title',
     footer: 'Footer',
     nativeFlowMessage: {
-      messageParamsJson: JSON.stringify({
-        bottom_sheet: {
-          in_thread_buttons_limit: 2,
-          list_title: 'Menu',
-          button_title: 'Pilih'
-        }
-      }),
+      messageParamsJson: JSON.stringify({ bottom_sheet: { in_thread_buttons_limit: 2, list_title: 'Menu', button_title: 'Pilih' } }),
       buttons: [{
         name: 'single_select',
-        buttonParamsJson: JSON.stringify({
-          title: 'Pilih Opsi',
-          sections: [{
-            title: 'Section',
-            rows: [{ title: 'Option 1', id: 'opt1' }]
-          }]
-        })
+        buttonParamsJson: JSON.stringify({ title: 'Pilih Opsi', sections: [{ title: 'Section', rows: [{ title: 'Option 1', id: 'opt1' }] }] })
       }]
     }
   }
@@ -224,13 +261,7 @@ await sock.sendMessage(jid, {
     retailerId: 'RETAIL001',
     priceAmount1000: 50000,
     currencyCode: 'IDR',
-    buttons: [{
-      name: 'cta_url',
-      buttonParamsJson: JSON.stringify({
-        display_text: 'Buy Now',
-        url: 'https://example.com/buy'
-      })
-    }]
+    buttons: [{ name: 'cta_url', buttonParamsJson: JSON.stringify({ display_text: 'Buy Now', url: 'https://example.com/buy' }) }]
   }
 })
 ```
@@ -252,13 +283,6 @@ await sock.sendMessage(jid, {
 await sock.sendStatusMention('Hello', jid)
 ```
 
-### Group Status V2
-```javascript
-await sock.sendMessage(jid, {
-  groupStatusMessage: { text: 'Hello World' }
-})
-```
-
 ---
 
 ## Group Functions
@@ -273,33 +297,27 @@ await sock.groupUpdateSubject(jid, 'New Subject')
 // Update description
 await sock.groupUpdateDescription(jid, 'New Description')
 
-// Add participants
+// Add / Remove participants
 await sock.groupParticipantsUpdate(jid, [participant1], 'add')
-
-// Remove participants
 await sock.groupParticipantsUpdate(jid, [participant1], 'remove')
 
-// Promote to admin
+// Promote / Demote admin
 await sock.groupParticipantsUpdate(jid, [participant1], 'promote')
-
-// Demote admin
 await sock.groupParticipantsUpdate(jid, [participant1], 'demote')
 
 // Leave group
 await sock.groupLeave(jid)
 
-// Get invite code
+// Invite code
 const code = await sock.groupInviteCode(jid)
-
-// Revoke invite code
 await sock.groupRevokeInviteCode(jid)
 
-// Set group settings
-await sock.groupSettingUpdate(jid, 'announcement')  // or 'not_announcement'
-await sock.groupSettingUpdate(jid, 'locked')         // or 'unlocked'
+// Settings
+await sock.groupSettingUpdate(jid, 'announcement')   // or 'not_announcement'
+await sock.groupSettingUpdate(jid, 'locked')          // or 'unlocked'
 
-// Toggle ephemeral messages
-await sock.groupToggleEphemeral(jid, 86400)  // 24 hours
+// Ephemeral messages
+await sock.groupToggleEphemeral(jid, 86400)
 
 // Label group
 await sock.setLabelGroup(jid, 'label')
@@ -310,10 +328,8 @@ await sock.setLabelGroup(jid, 'label')
 ## Newsletter
 
 ```javascript
-// Get newsletter info from URL
 const info = await sock.newsletterFromUrl('https://whatsapp.com/channel/...')
-console.log(info)
-// { name, id, state, subscribers, verification, creation_time, description }
+console.log(info) // { name, id, state, subscribers, verification, creation_time, description }
 ```
 
 ---
@@ -324,8 +340,9 @@ console.log(info)
 // Check if number is on WhatsApp
 const result = await sock.checkWhatsApp(jid)
 
-// Block/unblock contact
-await sock.updateBlockStatus(jid, 'block')    // or 'unblock'
+// Block/unblock
+await sock.updateBlockStatus(jid, 'block')
+await sock.updateBlockStatus(jid, 'unblock')
 
 // Update profile status
 await sock.updateProfileStatus('New status')
@@ -333,10 +350,8 @@ await sock.updateProfileStatus('New status')
 // Update profile name
 await sock.updateProfileName('New Name')
 
-// Set profile picture
+// Set/remove profile picture
 await sock.updateProfilePicture(jid, { url: 'https://example.com/photo.jpg' })
-
-// Remove profile picture
 await sock.removeProfilePicture(jid)
 
 // Get business profile
@@ -350,17 +365,18 @@ const profile = await sock.getBusinessProfile(jid)
 ```javascript
 // Connection update
 sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
+  if (connection === 'open') console.log('Connected')
   if (connection === 'close') {
-    // reconnect
+    // reconnect logic
   }
 })
 
-// Messages received
+// Messages
 sock.ev.on('messages.upsert', ({ messages, type }) => {
   // handle incoming messages
 })
 
-// Presence update
+// Presence
 sock.ev.on('presence.update', ({ id, presences }) => {
   // online, typing, recording, etc
 })
@@ -370,7 +386,7 @@ sock.ev.on('groups.update', (groups) => {
   // group metadata changes
 })
 
-// Credentials update
+// Credentials
 sock.ev.on('creds.update', saveCreds)
 ```
 
@@ -379,6 +395,7 @@ sock.ev.on('creds.update', saveCreds)
 ## Contact
 
 - GitHub: [ms-nicky](https://github.com/ms-nicky)
+- Telegram: [t.me/MsXploiter](https://t.me/MsXploiter)
 
 ---
 
