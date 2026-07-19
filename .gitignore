@@ -1,0 +1,10 @@
+node_modules/
+auth_info/
+session/
+*.session.json
+.env
+.env.local
+.env.*
+*.log
+npm-debug.log*
+package-lock.json
