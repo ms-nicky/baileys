@@ -1,7 +1,10 @@
 # @ms-nicky/baileys
 
 WhatsApp API library using WebSocket technology (multi-device).  
-Fork of [WhiskeySockets/Baileys](https://github.com/WhiskeySockets/Baileys) with pairing code fixes and auto version detection.
+Fork of [WhiskeySockets/Baileys](https://github.com/WhiskeySockets/Baileys) with:
+- Pairing code fixes (canonical browser label, server response wait, 515 auto-reconnect)
+- Auto version detection from WPPConnect
+- Built-in VoIP calling (WebRTC / baileys-caller)
 
 ---
 
@@ -38,7 +41,7 @@ async function start() {
       keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
     },
     printQRInTerminal: false,
-    browser: ['Chrome (Linux)', '', ''],
+    browser: ['Linux', 'Chrome', ''],  // [OS, browser, version]
   })
 
   sock.ev.on('creds.update', saveCreds)
@@ -46,11 +49,12 @@ async function start() {
     if (connection === 'open') console.log('✓ Connected')
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode
-      if (code !== 401) setTimeout(start, 5000)
+      // 515 = pairing accepted, reconnect
+      if (code === 515) start()
+      else if (code !== 401) setTimeout(start, 5000)
     }
   })
 
-  // Generate & display pairing code
   const code = await sock.requestPairingCode('62812xxxxxxx')
   console.log(`Pairing code: ${code}`)
 }
@@ -61,10 +65,11 @@ start()
 ### Using the included pair script
 
 ```bash
-node pair.js 62812xxxxxxx
+node pair.js 62812xxxxxxx            # random code
+node pair.js 62812xxxxxxx ELAINA13   # custom code (8 chars)
 ```
 
-The script will display the pairing code, then send a test message once connected.
+Auto-reconnects after pairing is accepted (handles 515 stream error).
 
 ---
 
@@ -72,27 +77,79 @@ The script will display the pairing code, then send a test message once connecte
 
 ### Auto Version Detection
 
-Fetches the latest WhatsApp Web version from [WPPConnect](https://wppconnect.io/whatsapp-versions) at startup. Falls back to a hardcoded version if the fetch fails.
+Fetches latest WA version from [WPPConnect](https://wppconnect.io/whatsapp-versions), falls back to hardcoded.
 
 ```javascript
 const { version, isLatest } = await fetchLatestWaWebVersion()
 ```
 
-### Pairing Code Fix
+### Pairing Code
 
-- Validates phone number (international format, rejects leading `0`)
-- Waits for Noise handshake to complete before sending pairing IQ
-- Uses random nonce instead of hardcoded `"0"`
-- Supports custom pairing key
+- Validates international format (rejects leading `0`)
+- Waits for Noise handshake + server response (`query` with 30s timeout)
+- Custom pairing code support (exactly 8 chars)
+- Canonical browser/OS label (WhatsApp rejects non-standard labels)
+- Raw binary nonce (not hex string)
+- Auto-reconnect on 515
 
 ```javascript
 const code = await sock.requestPairingCode('62812xxxxxxx')
-const code = await sock.requestPairingCode('62812xxxxxxx', 'CUSTOMKEY')
+const code = await sock.requestPairingCode('62812xxxxxxx', 'MYCODE13')
 ```
 
 ### 405 Error Recovery
 
-Automatically detects `405 Method Not Allowed` errors from WhatsApp and retries the connection.
+Automatically detects `405 Method Not Allowed` and retries the connection.
+
+---
+
+## VoIP / Voice Calling
+
+Built-in WebRTC voice calling using the official WhatsApp WASM stack.  
+Powered by [baileys-caller](https://github.com/SheIITear/baileys-caller).
+
+### Usage
+
+```javascript
+const { createVoipClient, CallState } = require('@ms-nicky/baileys')
+
+const client = await createVoipClient({ authDir: 'auth_info' })
+const call = await client.call('62812xxxxxxx', { durationMs: 60000 })
+
+call.on('ringing', () => console.log('• ringing'))
+call.on('connected', () => console.log('✓ connected'))
+call.on('ended', (reason) => console.log('• ended:', reason))
+
+// Control
+call.mute(true)       // mute/unmute
+call.end()            // hang up
+call.waitForEnd()     // promise resolves when call ends
+
+// Later
+client.disconnect()   // cleanup
+```
+
+### Test Script
+
+```bash
+node call-test.js                    # default target
+node call-test.js 62812xxxxxxx       # specific number
+CALL_DURATION=60000 node call-test.js  # custom duration (ms)
+```
+
+### CallState
+
+```javascript
+CallState.Idle              // 0
+CallState.Calling           // 1
+CallState.PreacceptReceived // 2
+CallState.ReceivedCall      // 3
+CallState.AcceptSent        // 4
+CallState.AcceptReceived    // 5
+CallState.Active            // 6
+CallState.ActiveElsewhere   // 7
+CallState.Ending            // 13
+```
 
 ---
 
